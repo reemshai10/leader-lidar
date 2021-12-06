@@ -1,0 +1,88 @@
+pipeline{
+    agent any
+    tools {
+        maven 'maven-3.6.2'
+        jdk 'jdk8'
+    }
+    options{
+        timestamps()
+        timeout(unit: 'MINUTES', time: 10)
+        buildDiscarder(logRotator(
+            numToKeepStr: '4',
+            daysToKeepStr: '7',
+            artifactNumToKeepStr: '30')
+        )
+    }
+    stages{
+       stage('build'){
+            steps {
+                echo 'build'
+                configFileProvider([configFile(fileId: 'settings', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh "mvn -s $MAVEN_SETTINGS_XML clean compile"
+                }
+                echo '=================== End Build ======================='
+            }
+        }
+        stage('test'){
+            steps {
+                echo '=================== Test ============================'
+                configFileProvider([configFile(fileId: 'settings', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh "mvn -s $MAVEN_SETTINGS_XML clean test"
+                }
+                echo '=================== End Test ========================'
+
+            }
+        }
+        stage('package'){
+            steps {
+                echo '=================== Package ========================='
+                configFileProvider([configFile(fileId: 'settings', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh "mvn -s $MAVEN_SETTINGS_XML clean package"
+                }
+                echo '=================== End Package ====================='
+            }
+        }
+        stage('E2E'){
+            when { expression {env.GIT_BRANCH == 'master' }}
+            steps{
+                echo "e2e Test!"
+                script {
+                         configFileProvider([configFile(fileId: 'settings', variable: 'MAVEN_SETTINGS')]){
+                            sh "mvn -s $MAVEN_SETTINGS dependency:get -DrepoUrl=http://artifactory:8081/artifactory/libs-snapshot-local -Dartifact=com.lidar:analytics:99-SNAPSHOT:jar -Dtransitive=false -Ddest=analytics.jar"
+                            sh "mvn -s $MAVEN_SETTINGS dependency:get -DrepoUrl=http://artifactory:8081/artifactory/libs-snapshot-local -Dartifact=com.lidar:telemetry:99-SNAPSHOT:jar -Dtransitive=false -Ddest=telemetry.jar"
+                        }
+                        sh "cp target/*.jar app.jar"
+                        sh "java -cp app.jar:analytics.jar:telemetry.jar com.lidar.simulation.Simulator"   
+                }
+                
+            }
+        }
+        stage('publish'){
+            steps {
+                echo '=================== Publish ========================='
+                configFileProvider([configFile(fileId: 'settings', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh "mvn -s $MAVEN_SETTINGS_XML clean deploy -DskipTests"
+                }
+                echo '=================== End Publish ====================='
+
+            }
+        }
+    }
+    
+    
+    
+    post{
+        always {
+            echo 'Post stage'
+            deleteDir()
+            
+        }
+        failure {
+                mail bcc: '', body: 'Failure to deploy', cc: '', from: '', replyTo: '', subject: 'jenkins job', to: 'reemtest12@gmail.com'
+            }
+        success {
+            mail bcc: '', body: 'Success to deploy', cc: '', from: '', replyTo: '', subject: 'jenkins job', to: 'reemtest12@gmail.com'
+        }     
+    }
+
+}
